@@ -31,6 +31,10 @@ Morpheus is a simulator for morpheological development programs. It runs a voxel
 
 A simple example is the cylinder. How do we write a cell program that grows an organoid shaped like a cylinder?
 
+```sh
+cargo run --release -- cylinder.local
+```
+
 Cell program:
 ![](./docs/cylinder_code.png)
 
