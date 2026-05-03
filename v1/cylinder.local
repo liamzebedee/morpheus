@@ -1,0 +1,44 @@
+;; CYLINDER local program (v2)
+;; Substrate: emit-gradient, read-gradient, replicate-toward (with :child-state),
+;;            neighbor-exists, internal state, if/comparators
+
+(define DECAY 0.9)              ;; per-division dilution factor
+(define STOP-THRESHOLD 0.37)     ;; ~ 0.99^100, sets axis height
+(define RADIUS-THRESHOLD 1.5)    ;; substrate read-gradient = min Euclidean distance to a source
+
+(define is-seed #f)
+(define is-axis #f)
+(define axis-potential 0.0)
+(define inside #f)
+(define has-grown-radial #f)
+
+;; Seed becomes axis with full potential
+(if is-seed (begin (set! is-axis #t)
+                   (set! axis-potential 1.0)))
+
+;; Only the tip (axis cell with no +z neighbor) extends, and only while
+;; potential exceeds threshold. Daughter inherits decayed potential.
+(if (and is-axis
+         (not (neighbor-exists +z))
+         (> axis-potential STOP-THRESHOLD))
+    (replicate-toward +z
+                      :child-state ((is-axis #t)
+                                    (axis-potential (* axis-potential DECAY)))))
+
+;; Axis cells source the radial morphogen
+(if is-axis (emit-gradient g-radial 1.0))
+
+;; Cells inside the radial isosurface flip to inside
+;; (read-gradient returns min Euclidean distance to nearest source,
+;;  so "inside" = distance < radius)
+(if (< (read-gradient g-radial) RADIUS-THRESHOLD)
+    (set! inside #t))
+
+;; Inside cells fill empty lateral neighbors once
+(if (and inside (not has-grown-radial))
+    (begin
+      (if (not (neighbor-exists +x)) (replicate-toward +x))
+      (if (not (neighbor-exists -x)) (replicate-toward -x))
+      (if (not (neighbor-exists +y)) (replicate-toward +y))
+      (if (not (neighbor-exists -y)) (replicate-toward -y))
+      (set! has-grown-radial #t)))
