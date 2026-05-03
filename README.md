@@ -1,5 +1,5 @@
-Morpheus V1
-===========
+Morpheus - bio-inspired voxel cell morpohology simulator
+========================================================
 
 ![](./docs/screenshot.png)
 
