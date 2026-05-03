@@ -1,6 +1,4 @@
-
-## Cell substrate.
-
+# Sim
 
 ## 3D voxel world.
 
@@ -13,7 +11,6 @@ Assumptions: base centered at the origin, axis along +z, voxel scale 1.0, single
 **Local programs**. Every local program is a single deterministic procedure that runs identically inside every cell, every tick.
 
 Time advances in discrete synchronous ticks: every cell reads its inputs, computes, and writes its outputs in lockstep. The simulation runs from a single seed cell at the origin until either a fixed-point is reached (no cell changes state, no division occurs) or a step budget is exhausted.
-
 
 ## Local program runtime.
 

@@ -1,0 +1,77 @@
+;; CONE local program
+;; Tapered cone: wide at the base, narrowing to a point at the top.
+;;
+;; Two coupled potentials:
+;;   axis-potential   -- decays vertically per +z division (sets HEIGHT)
+;;   shell-potential  -- decays laterally per ±x/±y division (sets RADIUS at layer)
+;;
+;; Each axis cell, once, seeds a 4-way radial wave with shell-potential = axis-potential.
+;; Layers at the base inherit shell-potential ≈ 1.0 → many lateral hops before decay.
+;; Layers at the tip inherit shell-potential ≈ AXIS-STOP → no lateral hops.
+
+(define AXIS-DECAY 0.97)         ;; height ≈ log(STOP)/log(AXIS-DECAY)
+(define AXIS-STOP 0.15)          ;; ≈ 62 layers tall
+(define SHELL-DECAY 0.78)        ;; per-lateral-hop dilution
+(define SHELL-STOP 0.15)         ;; base half-width ≈ 7-8
+
+(define is-seed #f)
+(define is-axis #f)
+(define is-shell #f)
+(define axis-potential 0.0)
+(define shell-potential 0.0)
+(define inside #f)
+(define has-grown-shell #f)
+(define has-grown-radial #f)
+
+;; Seed becomes the axis tip
+(if is-seed (begin (set! is-axis #t)
+                   (set! axis-potential 1.0)))
+
+;; Axis tip extends +z while potential remains
+(if (and is-axis
+         (not (neighbor-exists +z))
+         (> axis-potential AXIS-STOP))
+    (replicate-toward +z
+                      :child-state ((is-axis #t)
+                                    (axis-potential (* axis-potential AXIS-DECAY)))))
+
+;; Each axis cell, ONCE, seeds 4 lateral shell waves carrying shell-potential = axis-potential.
+;; Lower layers (axis-potential near 1) get long radial reach -> wider.
+(if (and is-axis (not has-grown-shell))
+    (begin
+      (replicate-toward +x :child-state ((is-shell #t) (shell-potential axis-potential)))
+      (replicate-toward -x :child-state ((is-shell #t) (shell-potential axis-potential)))
+      (replicate-toward +y :child-state ((is-shell #t) (shell-potential axis-potential)))
+      (replicate-toward -y :child-state ((is-shell #t) (shell-potential axis-potential)))
+      (set! has-grown-shell #t)))
+
+;; Shell cells flood-fill 4-way with their own decay; each cell only spawns once.
+(if (and is-shell
+         (> shell-potential SHELL-STOP)
+         (not has-grown-shell))
+    (begin
+      (if (not (neighbor-exists +x))
+          (replicate-toward +x :child-state ((is-shell #t)
+                                             (shell-potential (* shell-potential SHELL-DECAY)))))
+      (if (not (neighbor-exists -x))
+          (replicate-toward -x :child-state ((is-shell #t)
+                                             (shell-potential (* shell-potential SHELL-DECAY)))))
+      (if (not (neighbor-exists +y))
+          (replicate-toward +y :child-state ((is-shell #t)
+                                             (shell-potential (* shell-potential SHELL-DECAY)))))
+      (if (not (neighbor-exists -y))
+          (replicate-toward -y :child-state ((is-shell #t)
+                                             (shell-potential (* shell-potential SHELL-DECAY)))))
+      (set! has-grown-shell #t)))
+
+;; Single shape morphogen so the rendering stays a cohesive solid.
+(if (or is-axis is-shell) (emit-gradient g-shape 1.0))
+(if (< (read-gradient g-shape) 1.5) (set! inside #t))
+
+(if (and inside (not has-grown-radial))
+    (begin
+      (if (not (neighbor-exists +x)) (replicate-toward +x))
+      (if (not (neighbor-exists -x)) (replicate-toward -x))
+      (if (not (neighbor-exists +y)) (replicate-toward +y))
+      (if (not (neighbor-exists -y)) (replicate-toward -y))
+      (set! has-grown-radial #t)))

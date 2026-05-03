@@ -1,0 +1,106 @@
+;; SMILEY FACE local program
+;;
+;; A flat smiley in the z = 0 plane (~17 voxels across).
+;;
+;; Phase 1: seed grows 4 cardinal "ruler" spokes of length R from the origin.
+;; Phase 2: each spoke endpoint emits a landmark gradient (g-east, g-west,
+;;          g-north, g-south). Seed emits g-ready once spokes are formed.
+;; Phase 3: every cell trilaterates its own (x, y) from anchor distances:
+;;
+;;            d_east  = ||p - (+R, 0)||,  d_west  = ||p - (-R, 0)||
+;;            d_west^2 - d_east^2 = 4Rx   ->   x = (d_west^2 - d_east^2) / (4R)
+;;            d_south^2 - d_north^2 = 4Ry  ->  y = (d_south^2 - d_north^2) / (4R)
+;;
+;;          then applies a smiley predicate (eyes + smile arc) to set is-axis.
+;;
+;; Renderer: seed=yellow, is-axis=orange, inside=blue, other=gray.
+;;   -> yellow center, orange eyes & mouth, blue face, gray scaffold edge.
+
+(define R 8)
+(define DECAY 0.85)
+(define STOP 0.3)
+
+(define is-seed #f)
+(define is-east #f)
+(define is-west #f)
+(define is-north #f)
+(define is-south #f)
+(define inside #f)
+(define is-axis #f)
+(define spoke-pot 0.0)
+(define has-grown-spokes #f)
+(define has-grown-radial #f)
+(define tick-counter 0)
+(define x 0.0)
+(define y 0.0)
+(define rr 0.0)
+
+(set! tick-counter (+ tick-counter 1))
+
+;; ---- Phase 1a: seed seeds the 4 spokes (one cell each direction) ----
+(if (and is-seed (not has-grown-spokes))
+    (begin
+      (replicate-toward +x :child-state ((is-east #t) (spoke-pot DECAY)))
+      (replicate-toward -x :child-state ((is-west #t) (spoke-pot DECAY)))
+      (replicate-toward +y :child-state ((is-north #t) (spoke-pot DECAY)))
+      (replicate-toward -y :child-state ((is-south #t) (spoke-pot DECAY)))
+      (set! has-grown-spokes #t)))
+
+;; ---- Phase 1b: each spoke extends in its OWN direction, decaying ----
+;; The is-east / is-west / is-north / is-south flags are how spoke cells
+;; remember which direction to extend. Decay sets the spoke length.
+(if (and is-east  (> spoke-pot STOP) (not (neighbor-exists +x)))
+    (replicate-toward +x :child-state ((is-east  #t) (spoke-pot (* spoke-pot DECAY)))))
+(if (and is-west  (> spoke-pot STOP) (not (neighbor-exists -x)))
+    (replicate-toward -x :child-state ((is-west  #t) (spoke-pot (* spoke-pot DECAY)))))
+(if (and is-north (> spoke-pot STOP) (not (neighbor-exists +y)))
+    (replicate-toward +y :child-state ((is-north #t) (spoke-pot (* spoke-pot DECAY)))))
+(if (and is-south (> spoke-pot STOP) (not (neighbor-exists -y)))
+    (replicate-toward -y :child-state ((is-south #t) (spoke-pot (* spoke-pot DECAY)))))
+
+;; ---- Phase 2: spoke endpoints emit landmark gradients ----
+;; Only the spoke cell that has stopped extending (pot fell below STOP) emits.
+(if (and is-east  (<= spoke-pot STOP)) (emit-gradient g-east  0))
+(if (and is-west  (<= spoke-pot STOP)) (emit-gradient g-west  0))
+(if (and is-north (<= spoke-pot STOP)) (emit-gradient g-north 0))
+(if (and is-south (<= spoke-pot STOP)) (emit-gradient g-south 0))
+
+;; Seed broadcasts:
+;;   g-face  - any cell within R of seed becomes a disc cell (the face)
+;;   g-ready - signals "phase 2 done, you can decode coordinates now"
+(if is-seed (emit-gradient g-face 0))
+(if (and is-seed (> tick-counter 8)) (emit-gradient g-ready 0))
+
+;; ---- Disc fill: cells within R of the seed become "inside" (face) ----
+(if (< (read-gradient g-face) R) (set! inside #t))
+(if (and inside (not has-grown-radial))
+    (begin
+      (if (not (neighbor-exists +x)) (replicate-toward +x))
+      (if (not (neighbor-exists -x)) (replicate-toward -x))
+      (if (not (neighbor-exists +y)) (replicate-toward +y))
+      (if (not (neighbor-exists -y)) (replicate-toward -y))
+      (set! has-grown-radial #t)))
+
+;; ---- Phase 3: trilaterate (x, y) and apply the smiley pattern ----
+;; Gated on g-ready so it never fires before all four anchors emit.
+;; (read-gradient returns 0 either when there are no sources or when this
+;;  cell IS the source - we exclude seed which is the source for g-ready.)
+(if (and (not is-seed) (> (read-gradient g-ready) 0))
+    (begin
+      (set! x (/ (- (* (read-gradient g-west)  (read-gradient g-west))
+                    (* (read-gradient g-east)  (read-gradient g-east)))
+                 (* 4 R)))
+      (set! y (/ (- (* (read-gradient g-south) (read-gradient g-south))
+                    (* (read-gradient g-north) (read-gradient g-north)))
+                 (* 4 R)))
+
+      ;; Eyes at (-3, 2) and (+3, 2), each a small disk of radius ~1.5
+      (if (or (< (+ (* (+ x 3) (+ x 3)) (* (- y 2) (- y 2))) 2.5)
+              (< (+ (* (- x 3) (- x 3)) (* (- y 2) (- y 2))) 2.5))
+          (set! is-axis #t))
+
+      ;; Smile: cells lying on an arc at radius ~4.2 from (0, -2),
+      ;; restricted to the lower half (y < -1).
+      (set! rr (+ (* x x) (* (+ y 2) (+ y 2))))
+      (if (and (> rr 16) (< rr 25) (< y -1))
+          (set! is-axis #t))))

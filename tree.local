@@ -1,0 +1,81 @@
+;; TREE local program
+;; Trunk grows up by decaying potential (like the cylinder).
+;; When the trunk tip exhausts its potential, it transitions to a
+;; canopy seed which spreads in all 6 directions with its own decay.
+;; Both trunk and canopy emit a radial morphogen, and nearby cells
+;; thicken into a connected solid.
+
+(define TRUNK-DECAY 0.93)        ;; per-division dilution along the trunk
+(define TRUNK-STOP 0.3)          ;; trunk height ~ log(0.3)/log(0.93) ≈ 16
+
+(define CANOPY-DECAY 0.78)       ;; per-division dilution in the canopy
+(define CANOPY-STOP 0.25)        ;; canopy radius ~ log(0.25)/log(0.78) ≈ 5
+
+(define TRUNK-RADIUS 1.5)        ;; substrate read-gradient = min Euclidean distance
+(define CANOPY-RADIUS 1.5)
+
+(define is-seed #f)
+(define is-trunk #f)
+(define is-canopy #f)
+(define trunk-potential 0.0)
+(define canopy-potential 0.0)
+(define inside #f)
+(define has-grown-radial #f)
+
+;; Seed becomes the trunk base
+(if is-seed (begin (set! is-trunk #t)
+                   (set! trunk-potential 1.0)))
+
+;; Trunk tip extends +z while potential lasts
+(if (and is-trunk
+         (not (neighbor-exists +z))
+         (> trunk-potential TRUNK-STOP))
+    (replicate-toward +z
+                      :child-state ((is-trunk #t)
+                                    (trunk-potential (* trunk-potential TRUNK-DECAY)))))
+
+;; A trunk tip whose potential has fizzled becomes the canopy origin
+(if (and is-trunk
+         (not (neighbor-exists +z))
+         (<= trunk-potential TRUNK-STOP)
+         (not is-canopy))
+    (begin (set! is-canopy #t)
+           (set! canopy-potential 1.0)))
+
+;; Canopy: 6-way replication, daughter inherits decayed potential
+(if (and is-canopy (> canopy-potential CANOPY-STOP))
+    (begin
+      (if (not (neighbor-exists +x))
+          (replicate-toward +x :child-state ((is-canopy #t)
+                                             (canopy-potential (* canopy-potential CANOPY-DECAY)))))
+      (if (not (neighbor-exists -x))
+          (replicate-toward -x :child-state ((is-canopy #t)
+                                             (canopy-potential (* canopy-potential CANOPY-DECAY)))))
+      (if (not (neighbor-exists +y))
+          (replicate-toward +y :child-state ((is-canopy #t)
+                                             (canopy-potential (* canopy-potential CANOPY-DECAY)))))
+      (if (not (neighbor-exists -y))
+          (replicate-toward -y :child-state ((is-canopy #t)
+                                             (canopy-potential (* canopy-potential CANOPY-DECAY)))))
+      (if (not (neighbor-exists +z))
+          (replicate-toward +z :child-state ((is-canopy #t)
+                                             (canopy-potential (* canopy-potential CANOPY-DECAY)))))
+      (if (not (neighbor-exists -z))
+          (replicate-toward -z :child-state ((is-canopy #t)
+                                             (canopy-potential (* canopy-potential CANOPY-DECAY)))))))
+
+;; Single shape morphogen emitted by every structural cell (trunk + canopy).
+;; Using ONE gradient avoids the "no sources -> read returns 0" trap that
+;; would otherwise make every cell inside-by-default during the trunk phase.
+(if (or is-trunk is-canopy) (emit-gradient g-shape 1.0))
+(if (< (read-gradient g-shape) 1.5)
+    (set! inside #t))
+
+;; Inside cells fill empty lateral neighbors once
+(if (and inside (not has-grown-radial))
+    (begin
+      (if (not (neighbor-exists +x)) (replicate-toward +x))
+      (if (not (neighbor-exists -x)) (replicate-toward -x))
+      (if (not (neighbor-exists +y)) (replicate-toward +y))
+      (if (not (neighbor-exists -y)) (replicate-toward -y))
+      (set! has-grown-radial #t)))
