@@ -101,3 +101,11 @@ Useful additions that aren't strictly minimum but make programs cleaner
 - Self-destruct. (die) — cell removes itself from the substrate. Cleans up scaffolding.
 - Neighbor occupancy sensing. (neighbor-occupied? direction) — needed to avoid pointless replication attempts and to detect "boundary" conditions.
 - Step counter. A globally synchronized step number that all cells can read. Useful for phasing — "do axis growth in steps 0–100, then radial fill in steps 100–200." Without this, phase ordering has to be encoded with gradient propagation as a clock, which works but is awkward.
+
+1 - vascular network
+
+2 - autophagy
+
+3 - gap junctions
+
+4 - literal clock logic which paper above probably covers

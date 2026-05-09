@@ -32,17 +32,17 @@
          (not (neighbor-exists +z))
          (> axis-potential AXIS-STOP))
     (replicate-toward +z
-                      :child-state ((is-axis #t)
+                      ((is-axis #t)
                                     (axis-potential (* axis-potential AXIS-DECAY)))))
 
 ;; Each axis cell, ONCE, seeds 4 lateral shell waves carrying shell-potential = axis-potential.
 ;; Lower layers (axis-potential near 1) get long radial reach -> wider.
 (if (and is-axis (not has-grown-shell))
     (begin
-      (replicate-toward +x :child-state ((is-shell #t) (shell-potential axis-potential)))
-      (replicate-toward -x :child-state ((is-shell #t) (shell-potential axis-potential)))
-      (replicate-toward +y :child-state ((is-shell #t) (shell-potential axis-potential)))
-      (replicate-toward -y :child-state ((is-shell #t) (shell-potential axis-potential)))
+      (replicate-toward +x ((is-shell #t) (shell-potential axis-potential)))
+      (replicate-toward -x ((is-shell #t) (shell-potential axis-potential)))
+      (replicate-toward +y ((is-shell #t) (shell-potential axis-potential)))
+      (replicate-toward -y ((is-shell #t) (shell-potential axis-potential)))
       (set! has-grown-shell #t)))
 
 ;; Shell cells flood-fill 4-way with their own decay; each cell only spawns once.
@@ -51,16 +51,16 @@
          (not has-grown-shell))
     (begin
       (if (not (neighbor-exists +x))
-          (replicate-toward +x :child-state ((is-shell #t)
+          (replicate-toward +x ((is-shell #t)
                                              (shell-potential (* shell-potential SHELL-DECAY)))))
       (if (not (neighbor-exists -x))
-          (replicate-toward -x :child-state ((is-shell #t)
+          (replicate-toward -x ((is-shell #t)
                                              (shell-potential (* shell-potential SHELL-DECAY)))))
       (if (not (neighbor-exists +y))
-          (replicate-toward +y :child-state ((is-shell #t)
+          (replicate-toward +y ((is-shell #t)
                                              (shell-potential (* shell-potential SHELL-DECAY)))))
       (if (not (neighbor-exists -y))
-          (replicate-toward -y :child-state ((is-shell #t)
+          (replicate-toward -y ((is-shell #t)
                                              (shell-potential (* shell-potential SHELL-DECAY)))))
       (set! has-grown-shell #t)))
 

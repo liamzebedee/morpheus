@@ -1,0 +1,20 @@
+;; 6-way decaying blob expansion. Tests replicate-toward with overrides
+;; and the apply-replications collision resolution at scale.
+;; Each is-blob cell spawns 6 daughters with potential decayed by 0.7.
+
+(define is-seed #f)
+(define is-blob #f)
+(define potential 0.0)
+(define has-grown #f)
+
+(if is-seed (begin (set! is-blob #t) (set! potential 1.0)))
+
+(if (and is-blob (> potential 0.3) (not has-grown))
+    (begin
+      (replicate-toward +x ((is-blob #t) (potential (* potential 0.7))))
+      (replicate-toward -x ((is-blob #t) (potential (* potential 0.7))))
+      (replicate-toward +y ((is-blob #t) (potential (* potential 0.7))))
+      (replicate-toward -y ((is-blob #t) (potential (* potential 0.7))))
+      (replicate-toward +z ((is-blob #t) (potential (* potential 0.7))))
+      (replicate-toward -z ((is-blob #t) (potential (* potential 0.7))))
+      (set! has-grown #t)))

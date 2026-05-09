@@ -82,6 +82,27 @@ impl World {
         self.cells.insert((0, 0, 0), Cell { env });
     }
 
+    /// Remove every cell whose center lies within `radius` voxels of `center`.
+    /// Returns the number of cells destroyed.
+    pub fn blast(&mut self, center: (f32, f32, f32), radius: f32) -> usize {
+        let r2 = radius * radius;
+        let before = self.cells.len();
+        self.cells.retain(|p, _| {
+            let dx = p.0 as f32 - center.0;
+            let dy = p.1 as f32 - center.1;
+            let dz = p.2 as f32 - center.2;
+            dx * dx + dy * dy + dz * dz > r2
+        });
+        // Drop gradient sources at destroyed positions so next tick reads
+        // a clean field.
+        self.gradients.retain(|_, sources| {
+            sources.retain(|(pos, _)| self.cells.contains_key(pos));
+            !sources.is_empty()
+        });
+        self.fixed_point = false;
+        before - self.cells.len()
+    }
+
     pub fn reset(&mut self, program: Vec<Val>) {
         self.cells.clear();
         self.gradients.clear();
@@ -199,11 +220,45 @@ impl World {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CellRole {
     Empty,
     Seed,
     Axis,
     Inside,
     Other,
+}
+
+impl crate::sim::Sim for World {
+    fn step(&mut self) -> Result<(), String> {
+        World::step(self)
+    }
+    fn tick(&self) -> u64 {
+        self.tick
+    }
+    fn cell_count(&self) -> usize {
+        self.cells.len()
+    }
+    fn fixed_point(&self) -> bool {
+        self.fixed_point
+    }
+    fn snapshot(&mut self) -> Vec<crate::sim::CellSnapshot> {
+        self.cells
+            .keys()
+            .map(|&p| crate::sim::CellSnapshot {
+                pos: p,
+                role: self.cell_role(p),
+            })
+            .collect()
+    }
+    fn read_state(&mut self, pos: (i32, i32, i32), var: &str) -> Option<f32> {
+        let cell = self.cells.get(&pos)?;
+        let env = cell.env.borrow();
+        let v = env.get(var)?;
+        match v {
+            crate::lisp::Val::Num(n) => Some(*n as f32),
+            crate::lisp::Val::Bool(b) => Some(if *b { 1.0 } else { 0.0 }),
+            _ => None,
+        }
+    }
 }

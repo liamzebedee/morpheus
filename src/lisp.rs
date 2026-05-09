@@ -270,47 +270,33 @@ pub fn eval(expr: &Val, env: &Env, sub: &mut dyn Substrate) -> Result<Val, Strin
                         return Ok(Val::Num(sub.read_gradient(&name)));
                     }
                     "replicate-toward" => {
-                        if items.len() < 2 {
-                            return Err("replicate-toward: need direction".into());
+                        // (replicate-toward DIR)
+                        // (replicate-toward DIR ((NAME EXPR) ...))
+                        if items.len() < 2 || items.len() > 3 {
+                            return Err("replicate-toward: (DIR) or (DIR OVERRIDES)".into());
                         }
-                        let d = match &items[1] {
+                        let dir = match &items[1] {
                             Val::Sym(n) => parse_dir(n),
                             _ => None,
-                        };
-                        let dir = match d {
-                            Some(d) => d,
-                            None => return Err(format!("bad direction: {:?}", items[1])),
-                        };
+                        }
+                        .ok_or_else(|| format!("bad direction: {:?}", items[1]))?;
                         let mut child_state: Vec<(String, Val)> = Vec::new();
-                        let mut i = 2;
-                        while i < items.len() {
-                            let kw = match &items[i] {
-                                Val::Sym(s) => s.clone(),
-                                _ => return Err("replicate-toward: expected keyword".into()),
+                        if items.len() == 3 {
+                            let pairs = match &items[2] {
+                                Val::List(l) => l.clone(),
+                                _ => return Err("replicate-toward overrides must be a list".into()),
                             };
-                            if kw == ":child-state" {
-                                if i + 1 >= items.len() {
-                                    return Err(":child-state needs a value".into());
-                                }
-                                let pairs = match &items[i + 1] {
-                                    Val::List(l) => l.clone(),
-                                    _ => return Err(":child-state expects a list".into()),
+                            for pair in pairs {
+                                let p = match pair {
+                                    Val::List(l) if l.len() == 2 => l,
+                                    _ => return Err("override must be (name expr)".into()),
                                 };
-                                for pair in pairs {
-                                    let p = match pair {
-                                        Val::List(l) if l.len() == 2 => l,
-                                        _ => return Err(":child-state pair must be (name expr)".into()),
-                                    };
-                                    let name = match &p[0] {
-                                        Val::Sym(n) => n.clone(),
-                                        _ => return Err(":child-state name must be symbol".into()),
-                                    };
-                                    let v = eval(&p[1], env, sub)?;
-                                    child_state.push((name, v));
-                                }
-                                i += 2;
-                            } else {
-                                return Err(format!("replicate-toward: unknown keyword {}", kw));
+                                let name = match &p[0] {
+                                    Val::Sym(n) => n.clone(),
+                                    _ => return Err("override name must be symbol".into()),
+                                };
+                                let v = eval(&p[1], env, sub)?;
+                                child_state.push((name, v));
                             }
                         }
                         sub.replicate_toward(dir, child_state);

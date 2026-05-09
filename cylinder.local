@@ -1,5 +1,5 @@
 ;; CYLINDER local program (v2)
-;; Substrate: emit-gradient, read-gradient, replicate-toward (with :child-state),
+;; Substrate: emit-gradient, read-gradient, replicate-toward (with optional override list),
 ;;            neighbor-exists, internal state, if/comparators
 
 (define DECAY 0.9)              ;; per-division dilution factor
@@ -22,7 +22,7 @@
          (not (neighbor-exists +z))
          (> axis-potential STOP-THRESHOLD))
     (replicate-toward +z
-                      :child-state ((is-axis #t)
+                      ((is-axis #t)
                                     (axis-potential (* axis-potential DECAY)))))
 
 ;; Axis cells source the radial morphogen

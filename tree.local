@@ -31,7 +31,7 @@
          (not (neighbor-exists +z))
          (> trunk-potential TRUNK-STOP))
     (replicate-toward +z
-                      :child-state ((is-trunk #t)
+                      ((is-trunk #t)
                                     (trunk-potential (* trunk-potential TRUNK-DECAY)))))
 
 ;; A trunk tip whose potential has fizzled becomes the canopy origin
@@ -46,22 +46,22 @@
 (if (and is-canopy (> canopy-potential CANOPY-STOP))
     (begin
       (if (not (neighbor-exists +x))
-          (replicate-toward +x :child-state ((is-canopy #t)
+          (replicate-toward +x ((is-canopy #t)
                                              (canopy-potential (* canopy-potential CANOPY-DECAY)))))
       (if (not (neighbor-exists -x))
-          (replicate-toward -x :child-state ((is-canopy #t)
+          (replicate-toward -x ((is-canopy #t)
                                              (canopy-potential (* canopy-potential CANOPY-DECAY)))))
       (if (not (neighbor-exists +y))
-          (replicate-toward +y :child-state ((is-canopy #t)
+          (replicate-toward +y ((is-canopy #t)
                                              (canopy-potential (* canopy-potential CANOPY-DECAY)))))
       (if (not (neighbor-exists -y))
-          (replicate-toward -y :child-state ((is-canopy #t)
+          (replicate-toward -y ((is-canopy #t)
                                              (canopy-potential (* canopy-potential CANOPY-DECAY)))))
       (if (not (neighbor-exists +z))
-          (replicate-toward +z :child-state ((is-canopy #t)
+          (replicate-toward +z ((is-canopy #t)
                                              (canopy-potential (* canopy-potential CANOPY-DECAY)))))
       (if (not (neighbor-exists -z))
-          (replicate-toward -z :child-state ((is-canopy #t)
+          (replicate-toward -z ((is-canopy #t)
                                              (canopy-potential (* canopy-potential CANOPY-DECAY)))))))
 
 ;; Single shape morphogen emitted by every structural cell (trunk + canopy).

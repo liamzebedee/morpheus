@@ -1,4 +1,7 @@
+mod ast;
+mod gpu_sim;
 mod lisp;
+mod sim;
 mod world;
 
 use eframe::egui;
@@ -12,6 +15,7 @@ use world::{CellRole, World};
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let headless = args.iter().any(|a| a == "--headless");
+    let use_gpu = args.iter().any(|a| a == "--gpu");
     let max_steps: usize = args
         .windows(2)
         .find(|w| w[0] == "--steps")
@@ -30,7 +34,13 @@ fn main() {
         .windows(2)
         .find(|w| w[0] == "--frames-dir")
         .map(|w| w[1].clone());
-    let skip_flags = ["--steps", "--save-every", "--out", "--frames-dir"];
+    let vars: Option<String> = args
+        .windows(2)
+        .find(|w| w[0] == "--vars")
+        .map(|w| w[1].clone());
+    let dump_positions = args.iter().any(|a| a == "--dump-positions");
+    let bench = args.iter().any(|a| a == "--bench");
+    let skip_flags = ["--steps", "--save-every", "--out", "--frames-dir", "--vars"];
     let path_arg = {
         let mut iter = args.iter().skip(1).peekable();
         let mut found: Option<String> = None;
@@ -55,11 +65,46 @@ fn main() {
     };
 
     if headless {
-        if let Err(e) = run_headless(&code_path, max_steps, save_every, out_path.as_deref(), frames_dir.as_deref()) {
+        let var_list: Vec<String> = vars
+            .as_deref()
+            .unwrap_or("")
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .collect();
+        let result = if use_gpu {
+            run_with_timing(
+                bench,
+                || build_gpu_sim(&code_path),
+                |s| {
+                    run_headless(s, max_steps, save_every, out_path.as_deref(), frames_dir.as_deref())?;
+                    print_vars(s, (0, 0, 0), &var_list);
+                    if dump_positions { dump_positions_csv(s); }
+                    Ok(())
+                },
+            )
+        } else {
+            run_with_timing(
+                bench,
+                || build_cpu_sim(&code_path),
+                |s| {
+                    run_headless(s, max_steps, save_every, out_path.as_deref(), frames_dir.as_deref())?;
+                    print_vars(s, (0, 0, 0), &var_list);
+                    if dump_positions { dump_positions_csv(s); }
+                    Ok(())
+                },
+            )
+        };
+        if let Err(e) = result {
             eprintln!("error: {}", e);
             std::process::exit(1);
         }
         return;
+    }
+
+    if use_gpu {
+        eprintln!("--gpu is currently only supported with --headless");
+        std::process::exit(2);
     }
 
     let opts = eframe::NativeOptions {
@@ -76,72 +121,133 @@ fn main() {
     }
 }
 
+/// Drive any sim engine for `max_steps` ticks (or until fixed-point), saving
+/// frames if requested and a final summary image. Engine-agnostic.
 fn run_headless(
-    code_path: &PathBuf,
+    sim: &mut dyn sim::Sim,
     max_steps: usize,
     save_every: usize,
     out_path: Option<&str>,
     frames_dir: Option<&str>,
 ) -> Result<(), String> {
-    let code = fs::read_to_string(code_path).map_err(|e| format!("read: {}", e))?;
-    let program = lisp::parse_program(&code).map_err(|e| format!("parse: {}", e))?;
-    let mut world = World::new(program);
-
     if let Some(dir) = frames_dir {
         fs::create_dir_all(dir).map_err(|e| format!("mkdir: {}", e))?;
     }
 
     let mut frame_idx: usize = 0;
-    let save_frame = |world: &World, dir: &str, idx: usize| -> Result<(), String> {
-        let img = render_perspective(world, 1600, 1000);
+    let mut save_frame = |sim: &mut dyn sim::Sim, dir: &str, idx: usize| -> Result<(), String> {
+        let cells = sim.snapshot();
+        let img = render_perspective(&cells, 1600, 1000);
         let p = PathBuf::from(dir).join(format!("frame_{:05}.png", idx));
         img.save(&p).map_err(|e| format!("save: {}", e))
     };
 
     if save_every > 0 {
         if let Some(dir) = frames_dir {
-            save_frame(&world, dir, frame_idx)?;
+            save_frame(sim, dir, frame_idx)?;
             frame_idx += 1;
         }
     }
 
-    for step in 0..max_steps {
-        if world.fixed_point {
-            break;
-        }
-        world.step().map_err(|e| format!("step: {}", e))?;
-        if save_every > 0 {
+    if save_every > 0 && frames_dir.is_some() {
+        // per-frame snapshot needed: loop one tick at a time
+        for step in 0..max_steps {
+            if sim.fixed_point() { break; }
+            sim.step().map_err(|e| format!("step: {}", e))?;
             if let Some(dir) = frames_dir {
                 if (step + 1) % save_every == 0 {
-                    save_frame(&world, dir, frame_idx)?;
+                    save_frame(sim, dir, frame_idx)?;
                     frame_idx += 1;
                 }
             }
         }
+    } else {
+        // no per-step work: batch all ticks into one submit (huge GPU win)
+        sim.step_many(max_steps).map_err(|e| format!("step: {}", e))?;
     }
-
-    // Always save final frame
     if let Some(dir) = frames_dir {
-        save_frame(&world, dir, frame_idx)?;
+        save_frame(sim, dir, frame_idx)?;
     }
 
     let out = out_path
         .map(PathBuf::from)
         .unwrap_or_else(|| std::env::temp_dir().join("morpheus.png"));
-    let img = render_perspective(&world, 1600, 1000);
+    let cells = sim.snapshot();
+    let img = render_perspective(&cells, 1600, 1000);
     img.save(&out).map_err(|e| format!("save: {}", e))?;
     println!(
         "ticks={} cells={} fixed_point={}",
-        world.tick,
-        world.cells.len(),
-        world.fixed_point
+        sim.tick(),
+        cells.len(),
+        sim.fixed_point()
     );
     println!("{}", out.display());
     Ok(())
 }
 
+/// Time init vs run separately, so the wgpu startup tax doesn't pollute the
+/// per-tick measurement.
+fn run_with_timing<S, B, R>(bench: bool, build: B, run: R) -> Result<(), String>
+where
+    S: sim::Sim,
+    B: FnOnce() -> Result<S, String>,
+    R: FnOnce(&mut S) -> Result<(), String>,
+{
+    let t0 = std::time::Instant::now();
+    let mut s = build()?;
+    let t_init = t0.elapsed();
+    let t1 = std::time::Instant::now();
+    let res = run(&mut s);
+    let t_run = t1.elapsed();
+    if bench {
+        eprintln!(
+            "bench: init={:.3}s  run={:.3}s  total={:.3}s",
+            t_init.as_secs_f64(),
+            t_run.as_secs_f64(),
+            (t_init + t_run).as_secs_f64()
+        );
+    }
+    res
+}
+
+fn dump_positions_csv(sim: &mut dyn sim::Sim) {
+    let mut cells = sim.snapshot();
+    cells.sort_by_key(|c| (c.pos.2, c.pos.1, c.pos.0));
+    eprintln!("DUMP {} cells:", cells.len());
+    for c in &cells {
+        eprintln!("  ({:>3},{:>3},{:>3}) {:?}", c.pos.0, c.pos.1, c.pos.2, c.role);
+    }
+}
+
+fn print_vars(sim: &mut dyn sim::Sim, pos: (i32, i32, i32), vars: &[String]) {
+    for v in vars {
+        match sim.read_state(pos, v) {
+            Some(x) => println!("{} @ ({},{},{}) = {}", v, pos.0, pos.1, pos.2, x),
+            None => println!("{} @ ({},{},{}) = <unset>", v, pos.0, pos.1, pos.2),
+        }
+    }
+}
+
+fn build_cpu_sim(code_path: &PathBuf) -> Result<World, String> {
+    let code = fs::read_to_string(code_path).map_err(|e| format!("read: {}", e))?;
+    let program = lisp::parse_program(&code).map_err(|e| format!("parse: {}", e))?;
+    Ok(World::new(program))
+}
+
+fn build_gpu_sim(code_path: &PathBuf) -> Result<gpu_sim::GpuSim, String> {
+    let code = fs::read_to_string(code_path).map_err(|e| format!("read: {}", e))?;
+    let raw = lisp::parse_program(&code).map_err(|e| format!("parse: {}", e))?;
+    let flat = ast::flatten(&raw)?;
+    let (device, queue, info) = gpu_sim::create_headless_device()?;
+    eprintln!(
+        "gpu: {} ({:?}) backend={:?}",
+        info.name, info.device_type, info.backend
+    );
+    gpu_sim::GpuSim::new(device, queue, flat, [0, 0, 0])
+}
+
 fn render_orthographic(
-    world: &World,
+    cells: &[sim::CellSnapshot],
 ) -> image::ImageBuffer<image::Rgb<u8>, Vec<u8>> {
     use image::{ImageBuffer, Rgb};
     use std::collections::HashMap;
@@ -198,8 +304,9 @@ fn render_orthographic(
     let mut front: HashMap<(i32, i32), (i32, CellRole)> = HashMap::new(); // xz: drop y, viewer at -y (min y = closest)
     let mut side: HashMap<(i32, i32), (i32, CellRole)> = HashMap::new();  // yz: drop x, viewer at +x (max x = closest)
 
-    for (&pos, _) in &world.cells {
-        let role = world.cell_role(pos);
+    for c in cells {
+        let pos = c.pos;
+        let role = c.role;
         // top: keep cell with largest z (top-down view)
         let k = (pos.0, pos.1);
         match top.get(&k) {
@@ -268,7 +375,7 @@ fn render_orthographic(
 }
 
 fn render_perspective(
-    world: &World,
+    cells: &[sim::CellSnapshot],
     width: u32,
     height: u32,
 ) -> image::ImageBuffer<image::Rgb<u8>, Vec<u8>> {
@@ -278,14 +385,15 @@ fn render_perspective(
     let mut pixmap = Pixmap::new(width, height).unwrap();
     pixmap.fill(Color::from_rgba8(18, 20, 26, 255));
 
-    if world.cells.is_empty() {
+    if cells.is_empty() {
         return rgba_to_rgb(&pixmap);
     }
 
     // bounding sphere around all cells (cube corners ±0.5)
     let mut min = Vec3::splat(f32::INFINITY);
     let mut max = Vec3::splat(f32::NEG_INFINITY);
-    for (&pos, _) in &world.cells {
+    for c in cells {
+        let pos = c.pos;
         let p = Vec3::new(pos.0 as f32, pos.1 as f32, pos.2 as f32);
         min = min.min(p - Vec3::splat(0.5));
         max = max.max(p + Vec3::splat(0.5));
@@ -382,7 +490,7 @@ fn render_perspective(
         depth: f32,
         color: [u8; 3],
     }
-    let mut quads: Vec<Q> = Vec::with_capacity(world.cells.len() * 3);
+    let mut quads: Vec<Q> = Vec::with_capacity(cells.len() * 3);
     const FACES: [(usize, f32); 6] = [
         (0, 1.0),
         (0, -1.0),
@@ -391,10 +499,11 @@ fn render_perspective(
         (2, 1.0),
         (2, -1.0),
     ];
-    for (&pos, _) in &world.cells {
+    for c in cells {
+        let pos = c.pos;
         let center_c = Vec3::new(pos.0 as f32, pos.1 as f32, pos.2 as f32);
         let to_cam = (cam_pos - center_c).normalize_or_zero();
-        let role = world.cell_role(pos);
+        let role = c.role;
         let base = match role {
             CellRole::Seed => [255, 220, 100],
             CellRole::Axis => [230, 130, 90],
@@ -514,6 +623,14 @@ fn rgba_to_rgb(pm: &tiny_skia::Pixmap) -> image::ImageBuffer<image::Rgb<u8>, Vec
     out
 }
 
+struct Particle {
+    pos: Vec3,
+    vel: Vec3,
+    life: f32,
+    total_life: f32,
+    color: [u8; 3],
+}
+
 struct App {
     world: World,
     code: String,
@@ -526,6 +643,10 @@ struct App {
     dist: f32,
     target: Vec3,
     error: Option<String>,
+    blast_radius: f32,
+    aim_point: Option<Vec3>,
+    particles: Vec<Particle>,
+    rng_state: u32,
 }
 
 impl App {
@@ -544,6 +665,38 @@ impl App {
             dist: 60.0,
             target: Vec3::new(0.0, 0.0, 4.0),
             error: None,
+            blast_radius: 4.0,
+            aim_point: None,
+            particles: Vec::new(),
+            rng_state: 0x1234_5678,
+        }
+    }
+
+    fn fire_blast(&mut self, aim: Vec3) {
+        let destroyed = self
+            .world
+            .blast((aim.x, aim.y, aim.z), self.blast_radius);
+        // Particles: ~6 per destroyed cell, capped, plus a base burst.
+        let n = (destroyed * 4 + 30).min(800);
+        for _ in 0..n {
+            let dir = rand_unit_vec(&mut self.rng_state);
+            let speed = 4.0 + rand_f32(&mut self.rng_state) * 18.0;
+            let life = 0.6 + rand_f32(&mut self.rng_state) * 0.8;
+            let warm = rand_f32(&mut self.rng_state);
+            let color = if warm < 0.55 {
+                [255, 200, 80]
+            } else if warm < 0.85 {
+                [240, 110, 50]
+            } else {
+                [200, 200, 210]
+            };
+            self.particles.push(Particle {
+                pos: aim,
+                vel: dir * speed,
+                life,
+                total_life: life,
+                color,
+            });
         }
     }
 
@@ -595,6 +748,8 @@ impl eframe::App for App {
                     self.reload();
                 }
                 ui.add(egui::Slider::new(&mut self.speed_hz, 0.5..=60.0).text("Hz"));
+                ui.separator();
+                ui.add(egui::Slider::new(&mut self.blast_radius, 1.0..=20.0).text("blast"));
                 ui.separator();
                 ui.label(format!(
                     "tick {} · cells {}{}",
@@ -667,7 +822,12 @@ impl App {
         let (rect, response) = ui.allocate_exact_size(avail, egui::Sense::click_and_drag());
         let painter = ui.painter_at(rect);
 
-        if response.dragged() {
+        let dt = ui.input(|i| i.stable_dt).clamp(0.0, 0.1);
+
+        if response.dragged_by(egui::PointerButton::Secondary)
+            || response.dragged_by(egui::PointerButton::Middle)
+            || (response.dragged() && ui.input(|i| i.modifiers.shift))
+        {
             let d = response.drag_delta();
             self.yaw -= d.x * 0.008;
             self.pitch = (self.pitch + d.y * 0.008).clamp(-1.45, 1.45);
@@ -756,11 +916,54 @@ impl App {
             (2, -1.0),
         ];
 
+        // ---- aim picking: nearest cell to cursor (closest to camera among near hits) ----
+        let cursor = ui.input(|i| i.pointer.hover_pos());
+        self.aim_point = None;
+        if let Some(c) = cursor {
+            if rect.contains(c) {
+                let mut best: Option<(f32, Vec3)> = None;
+                for &p in self.world.cells.keys() {
+                    let cen = Vec3::new(p.0 as f32, p.1 as f32, p.2 as f32);
+                    if let Some(scr) = project(cen) {
+                        let pix = (scr - c).length();
+                        if pix < 14.0 {
+                            let depth = (cen - cam_pos).length_squared();
+                            let take = match best {
+                                None => true,
+                                Some((d, _)) => depth < d,
+                            };
+                            if take {
+                                best = Some((depth, cen));
+                            }
+                        }
+                    }
+                }
+                self.aim_point = best.map(|(_, c)| c);
+            }
+        }
+
+        let blast_r2 = self.blast_radius * self.blast_radius;
+        let aim = self.aim_point;
+
+        // ---- click to fire ----
+        if response.clicked() {
+            if let Some(a) = aim {
+                self.fire_blast(a);
+            }
+        }
+
         for (&pos, _cell) in self.world.cells.iter() {
             let center = Vec3::new(pos.0 as f32, pos.1 as f32, pos.2 as f32);
             let to_cam = (cam_pos - center).normalize_or_zero();
             let role = self.world.cell_role(pos);
-            let base = role_color(role);
+            let in_blast = aim
+                .map(|a| (center - a).length_squared() <= blast_r2)
+                .unwrap_or(false);
+            let base = if in_blast {
+                egui::Color32::from_rgb(230, 70, 60)
+            } else {
+                role_color(role)
+            };
 
             for &(axis, sign) in &FACES {
                 let mut n = Vec3::ZERO;
@@ -830,13 +1033,101 @@ impl App {
             painter.add(egui::Shape::convex_polygon(pts, q.color, edge));
         }
 
+        // ---- wire sphere reticle at aim point ----
+        if let Some(a) = aim {
+            let r = self.blast_radius;
+            let segs = 40;
+            let stroke = egui::Stroke::new(
+                1.5,
+                egui::Color32::from_rgba_unmultiplied(255, 90, 70, 220),
+            );
+            // Three orthogonal great circles approximate a sphere wireframe.
+            let planes: [(Vec3, Vec3); 3] = [
+                (Vec3::X, Vec3::Y),
+                (Vec3::X, Vec3::Z),
+                (Vec3::Y, Vec3::Z),
+            ];
+            for (u, v) in &planes {
+                let mut prev: Option<egui::Pos2> = None;
+                for i in 0..=segs {
+                    let t = (i as f32 / segs as f32) * std::f32::consts::TAU;
+                    let p = a + *u * (r * t.cos()) + *v * (r * t.sin());
+                    let scr = project(p);
+                    if let (Some(p0), Some(p1)) = (prev, scr) {
+                        painter.line_segment([p0, p1], stroke);
+                    }
+                    prev = scr;
+                }
+            }
+            // crosshair dot
+            if let Some(scr) = project(a) {
+                painter.circle_filled(scr, 3.0, egui::Color32::from_rgb(255, 100, 80));
+            }
+        }
+
+        // ---- particles: integrate then render ----
+        for p in self.particles.iter_mut() {
+            p.life -= dt;
+            // simple gravity + drag
+            p.vel.z -= 9.0 * dt;
+            p.vel *= (1.0 - 1.2 * dt).max(0.0);
+            p.pos += p.vel * dt;
+        }
+        self.particles.retain(|p| p.life > 0.0);
+        for p in &self.particles {
+            if let Some(scr) = project(p.pos) {
+                let t = (p.life / p.total_life).clamp(0.0, 1.0);
+                let alpha = (t * 255.0) as u8;
+                let radius = 2.0 + 4.0 * t;
+                let c = egui::Color32::from_rgba_unmultiplied(
+                    p.color[0],
+                    p.color[1],
+                    p.color[2],
+                    alpha,
+                );
+                painter.circle_filled(scr, radius, c);
+            }
+        }
+        if !self.particles.is_empty() {
+            ui.ctx().request_repaint();
+        }
+
         painter.text(
             rect.left_bottom() + egui::vec2(8.0, -8.0),
             egui::Align2::LEFT_BOTTOM,
-            "drag to orbit · scroll to zoom",
+            "click to blast · right/middle/shift-drag to orbit · scroll to zoom",
             egui::FontId::proportional(11.0),
             egui::Color32::from_rgb(140, 145, 155),
         );
+    }
+}
+
+fn xorshift32(state: &mut u32) -> u32 {
+    let mut x = *state;
+    if x == 0 {
+        x = 0xdead_beef;
+    }
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    *state = x;
+    x
+}
+
+fn rand_f32(state: &mut u32) -> f32 {
+    (xorshift32(state) as f32) / (u32::MAX as f32)
+}
+
+fn rand_unit_vec(state: &mut u32) -> Vec3 {
+    // Marsaglia's method for points on unit sphere.
+    loop {
+        let u = rand_f32(state) * 2.0 - 1.0;
+        let v = rand_f32(state) * 2.0 - 1.0;
+        let s = u * u + v * v;
+        if s < 1.0 && s > 1e-6 {
+            let f = 2.0 * (1.0 - s).sqrt();
+            return Vec3::new(u * f, v * f, 1.0 - 2.0 * s);
+        }
     }
 }
 

@@ -44,3 +44,33 @@ Organoid growth:
 Code explainer:
 ![](./docs/explainer.png)
 
+## Other shapes.
+
+```sh
+cargo run --release -- tree.local      # trunk + spherical canopy
+cargo run --release -- cone.local      # tapered cone shell
+cargo run --release -- smiley.local    # flat smiley face (uses 4-anchor trilateration so cells decode their own (x,y))
+```
+
+## Headless mode.
+
+For iterating on a `.local` program without launching the GUI: run the simulation to fixed-point (or a step budget) and dump orthographic projections to a PNG.
+
+```sh
+cargo run --release -- --headless tree.local
+cargo run --release -- --headless --steps 200 cone.local
+# writes /tmp/morpheus.png and prints the path
+```
+
+## Gun mode.
+
+Once an organoid is grown, you can blast it and watch it heal. The simulation keeps ticking, so any program that uses `(neighbor-exists +z)` (rather than a one-shot `has-grown` latch) will re-extend through the crater.
+
+- **left-click** in the 3D view: fire a spherical blast at the cell under the cursor
+- **blast** slider in the toolbar: radius (1–20 voxels)
+- **red wire sphere** at the cursor previews the destruction zone; cells inside it are tinted red live so you see exactly what'll go before you click
+- **right-drag** / **middle-drag** / **shift + left-drag**: orbit camera
+- **scroll**: zoom
+
+Each blast also throws off a particle burst proportional to the number of cells destroyed.
+

@@ -1,0 +1,19 @@
+;; pure-state program: no growth, no gradients, no neighbors.
+;; CPU and GPU should produce identical state evolution.
+;;
+;; After N ticks the seed cell has:
+;;   counter = N
+;;   doubled = 2 * N
+;;   tri     = 3 * N
+
+(define is-seed #f)
+(define counter 0)
+(define doubled 0)
+(define tri 0)
+
+(set! counter (+ counter 1))
+(set! doubled (* counter 2))
+(set! tri (+ counter (+ counter counter)))
+
+(if (and is-seed (< counter 5))
+    (set! tri (+ tri 100)))

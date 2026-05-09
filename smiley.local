@@ -40,23 +40,23 @@
 ;; ---- Phase 1a: seed seeds the 4 spokes (one cell each direction) ----
 (if (and is-seed (not has-grown-spokes))
     (begin
-      (replicate-toward +x :child-state ((is-east #t) (spoke-pot DECAY)))
-      (replicate-toward -x :child-state ((is-west #t) (spoke-pot DECAY)))
-      (replicate-toward +y :child-state ((is-north #t) (spoke-pot DECAY)))
-      (replicate-toward -y :child-state ((is-south #t) (spoke-pot DECAY)))
+      (replicate-toward +x ((is-east #t) (spoke-pot DECAY)))
+      (replicate-toward -x ((is-west #t) (spoke-pot DECAY)))
+      (replicate-toward +y ((is-north #t) (spoke-pot DECAY)))
+      (replicate-toward -y ((is-south #t) (spoke-pot DECAY)))
       (set! has-grown-spokes #t)))
 
 ;; ---- Phase 1b: each spoke extends in its OWN direction, decaying ----
 ;; The is-east / is-west / is-north / is-south flags are how spoke cells
 ;; remember which direction to extend. Decay sets the spoke length.
 (if (and is-east  (> spoke-pot STOP) (not (neighbor-exists +x)))
-    (replicate-toward +x :child-state ((is-east  #t) (spoke-pot (* spoke-pot DECAY)))))
+    (replicate-toward +x ((is-east  #t) (spoke-pot (* spoke-pot DECAY)))))
 (if (and is-west  (> spoke-pot STOP) (not (neighbor-exists -x)))
-    (replicate-toward -x :child-state ((is-west  #t) (spoke-pot (* spoke-pot DECAY)))))
+    (replicate-toward -x ((is-west  #t) (spoke-pot (* spoke-pot DECAY)))))
 (if (and is-north (> spoke-pot STOP) (not (neighbor-exists +y)))
-    (replicate-toward +y :child-state ((is-north #t) (spoke-pot (* spoke-pot DECAY)))))
+    (replicate-toward +y ((is-north #t) (spoke-pot (* spoke-pot DECAY)))))
 (if (and is-south (> spoke-pot STOP) (not (neighbor-exists -y)))
-    (replicate-toward -y :child-state ((is-south #t) (spoke-pot (* spoke-pot DECAY)))))
+    (replicate-toward -y ((is-south #t) (spoke-pot (* spoke-pot DECAY)))))
 
 ;; ---- Phase 2: spoke endpoints emit landmark gradients ----
 ;; Only the spoke cell that has stopped extending (pot fell below STOP) emits.
